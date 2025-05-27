@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JSON 변경점 뷰어</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        font-family: sans-serif;
+        background-color: #f9f9f9;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        padding: 1rem;
+        background-color: #2d3748;
+        color: white;
+        text-align: center;
+      }
+      .container {
+        flex: 1;
+        padding: 1rem;
+        display: flex;
+        flex-direction: column;
+        max-width: 100vw;
+        box-sizing: border-box;
+      }
+      .file-upload {
+        background: #fff;
+        border-radius: 8px;
+        padding: 16px 64px;
+        max-width: 960px;
+        margin: 20px auto;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      .file-upload label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .search-bar {
+        margin: 1rem 0;
+        display: flex;
+        gap: 1rem;
+      }
+      .search-tag {
+        background: #e2e8f0;
+        display: inline-block;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        margin-right: 1rem;
+        cursor: pointer;
+      }
+      .grid {
+        flex: 1;
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        grid-auto-rows: minmax(100px, auto);
+        gap: 1rem;
+        overflow-y: auto;
+      }
+      .card {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        padding: 1rem;
+        word-break: break-word;
+      }
+      .highlight-old {
+        background-color: #ffeef0;
+        color: #86181d;
+        padding: 0.25rem;
+        border-radius: 4px;
+      }
+      .highlight-new {
+        background-color: #e6ffed;
+        color: #22863a;
+        padding: 0.25rem;
+        border-radius: 4px;
+      }
+      .pagination {
+        display: flex;
+        justify-content: center;
+        gap: 0.5rem;
+        background: white;
+        padding: 1rem;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.1);
+        z-index: 10;
+      }
+      .modal {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.5);
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+      }
+      .modal-content {
+        background: white;
+        padding: 2rem;
+        border-radius: 8px;
+        max-width: 600px;
+        max-height: 80vh;
+        overflow: auto;
+      }
+      .notification {
+        position: fixed;
+        top: 1rem;
+        right: 1rem;
+        background: #2b6cb0;
+        color: white;
+        padding: 0.75rem 1.5rem;
+        border-radius: 6px;
+        display: none;
+        z-index: 9999;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="file-upload">
+        <label
+          >변경 전 파일
+          <input type="file" id="oldFile" accept="application/json" />
+        </label>
+        <label
+          >변경 후 파일
+          <input type="file" id="newFile" accept="application/json" />
+        </label>
+        <button onclick="compareFiles()">비교 시작</button>
+      </div>
+
+      <div class="search-bar">
+        <input
+          type="text"
+          id="searchInput"
+          placeholder="ID, 변경 전/후 값 검색..."
+        />
+        <button onclick="searchChanges()">검색</button>
+      </div>
+      <div id="searchTagContainer"></div>
+
+      <div id="cardGrid" class="grid"></div>
+
+      <div class="pagination">
+        <button onclick="goToFirst()">⏮</button>
+        <button onclick="goToPrev()">◀</button>
+        <span id="pageInfo"></span>
+        <button onclick="goToNext()">▶</button>
+        <button onclick="goToLast()">⏭</button>
+        <input
+          type="number"
+          id="pageInput"
+          style="width: 60px"
+          placeholder="이동"
+        />
+        <button onclick="jumpToPage()">이동</button>
+      </div>
+    </div>
+
+    <div id="modal" class="modal" onclick="closeModal(event)">
+      <div class="modal-content" id="modalContent"></div>
+    </div>
+
+    <div id="notification" class="notification"></div>
+
+    <script>
+      let diffs = [];
+      let filtered = [];
+      let currentPage = 1;
+      const pageSize = 10;
+
+      function showNotification(msg) {
+        const note = document.getElementById("notification");
+        note.innerText = msg;
+        note.style.display = "block";
+        setTimeout(() => (note.style.display = "none"), 2000);
+      }
+
+      function compareFiles() {
+        const oldFile = document.getElementById("oldFile").files[0];
+        const newFile = document.getElementById("newFile").files[0];
+        if (!oldFile || !newFile)
+          return showNotification("두 파일을 모두 선택하세요.");
+        Promise.all([oldFile.text(), newFile.text()]).then(
+          ([oldText, newText]) => {
+            const oldJSON = JSON.parse(oldText);
+            const newJSON = JSON.parse(newText);
+            diffs = getDiffs(oldJSON, newJSON);
+            filtered = [...diffs];
+            currentPage = 1;
+            render();
+          }
+        );
+      }
+
+      function getDiffs(oldObj, newObj, path = "") {
+        const changes = [];
+        const keys = new Set([
+          ...Object.keys(oldObj || {}),
+          ...Object.keys(newObj || {}),
+        ]);
+        keys.forEach((key) => {
+          const newPath = path ? `${path}.${key}` : key;
+          const oldVal = oldObj?.[key];
+          const newVal = newObj?.[key];
+          if (typeof oldVal === "object" && typeof newVal === "object") {
+            changes.push(...getDiffs(oldVal, newVal, newPath));
+          } else if (oldVal !== newVal) {
+            changes.push({ id: newPath, old: oldVal, new: newVal });
+          }
+        });
+        return changes;
+      }
+
+      function render() {
+        const grid = document.getElementById("cardGrid");
+        grid.innerHTML = "";
+        const start = (currentPage - 1) * pageSize;
+        const pageItems = filtered.slice(start, start + pageSize);
+        pageItems.forEach(({ id, old, new: newVal }) => {
+          const card = document.createElement("div");
+          card.className = "card";
+          card.innerHTML = `
+          <div><strong>ID:</strong> ${id} <button onclick="copyID('${id}')">📋</button></div>
+          <div><span class="highlight-old">${truncate(old)}</span></div>
+          <div><span class="highlight-new">${truncate(newVal)}</span></div>
+        `;
+          card.onclick = () => showModal(id, old, newVal);
+          grid.appendChild(card);
+        });
+        document.getElementById(
+          "pageInfo"
+        ).innerText = `${currentPage} / ${Math.ceil(
+          filtered.length / pageSize
+        )}`;
+      }
+
+      function truncate(text) {
+        const str = String(text);
+        return str.length > 50 ? str.slice(0, 47) + "..." : str;
+      }
+
+      function showModal(id, oldVal, newVal) {
+        const modal = document.getElementById("modal");
+        const content = document.getElementById("modalContent");
+        content.innerHTML = `
+        <h3>${id}</h3>
+        <p><strong>변경 전:</strong> <pre>${oldVal}</pre></p>
+        <p><strong>변경 후:</strong> <pre>${newVal}</pre></p>
+      `;
+        modal.style.display = "flex";
+      }
+
+      function closeModal(e) {
+        if (e.target.id === "modal") e.target.style.display = "none";
+      }
+
+      function copyID(id) {
+        navigator.clipboard.writeText(id);
+        showNotification(`ID 복사됨: ${id}`);
+      }
+
+      function goToFirst() {
+        currentPage = 1;
+        render();
+      }
+      function goToPrev() {
+        if (currentPage > 1) currentPage--;
+        render();
+      }
+      function goToNext() {
+        if (currentPage < Math.ceil(filtered.length / pageSize)) currentPage++;
+        render();
+      }
+      function goToLast() {
+        currentPage = Math.ceil(filtered.length / pageSize);
+        render();
+      }
+      function jumpToPage() {
+        const p = parseInt(document.getElementById("pageInput").value);
+        if (!isNaN(p) && p >= 1 && p <= Math.ceil(filtered.length / pageSize)) {
+          currentPage = p;
+          render();
+        }
+      }
+
+      function searchChanges() {
+        const q = document.getElementById("searchInput").value.trim();
+        if (!q) return;
+        filtered = diffs.filter(
+          (item) =>
+            item.id.includes(q) ||
+            String(item.old).includes(q) ||
+            String(item.new).includes(q)
+        );
+        currentPage = 1;
+        render();
+        const tag = document.createElement("span");
+        tag.className = "search-tag";
+        tag.innerText = `검색됨: ${q} ✕`;
+        tag.onclick = () => {
+          filtered = [...diffs];
+          tag.remove();
+          render();
+        };
+        document.getElementById("searchTagContainer").innerHTML = "";
+        document.getElementById("searchTagContainer").appendChild(tag);
+      }
+    </script>
+  </body>
+</html>
